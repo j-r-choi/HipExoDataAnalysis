@@ -1,0 +1,3 @@
+# Normalize line endings to LF for everyone, regardless of OS/editor
+# (fixes phantom whole-file diffs when switching between Mac and Windows).
+* text=auto eol=lf

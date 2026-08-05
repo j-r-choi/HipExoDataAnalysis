@@ -1,0 +1,16 @@
+# Raw/converted session data (kept locally & in OneDrive, not in git)
+/data/
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor/IDE
+.idea/
+.vscode/
