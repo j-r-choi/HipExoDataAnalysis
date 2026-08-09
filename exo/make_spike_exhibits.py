@@ -1,25 +1,41 @@
 """
 Anatomy of a measured-current spike: every relevant signal through one breach
-of the 60 A limit, plus all nine breaches aligned on the breach sample.
+of the 60 A limit, plus all breaches aligned on the breach sample.
 
-Run:  python misc_files/estop_analysis/make_spike_exhibits.py [row]
-      (optional row = CSV line number of the breach to detail; default 10029,
-       the 76.5 A event. Valid: 3080 8201 10029 16644 18863 19756 20009 21169 22201)
+Run:  python exo/make_spike_exhibits.py [--log HIP002] [--row N] [--limit 60]
+      --log    HIPxxx.csv under data/<subject>/<date>/exo/ (or a path to one)
+      --row    CSV line number of the breach to detail; default: the largest one
+      --limit  breach threshold on |left_motorCurrent| [A]
+The two PNGs are written next to the CSV, in the session's exo/ folder.
 
 Left-leg sign convention: extension torque is NEGATIVE, and the current that
 produces it is POSITIVE (main.c command is negated for the left leg).
 """
-import os, sys
+import argparse
 import numpy as np
 import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-df = pd.read_csv(os.path.join(HERE, "..", "HIP002.csv"))
+try:
+    from .data_paths import exo_csv
+except ImportError:            # run as a plain script, not as part of the package
+    from data_paths import exo_csv
+
+ap = argparse.ArgumentParser(description=__doc__,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("--log", default="HIP002", help="log name or CSV path (default: HIP002)")
+ap.add_argument("--row", type=int, default=None, help="CSV row of the breach to detail")
+ap.add_argument("--limit", type=float, default=60.0, help="breach threshold [A] (default: 60)")
+args = ap.parse_args()
+
+CSV = exo_csv(args.log)
+OUT = CSV.parent
+print(f"reading {CSV}")
+df = pd.read_csv(CSV)
 t = df.time.values
-CUR_LIMIT, K_T, G, K_P, K_D = 60.0, 0.12, 9.0, 1.6, 1.2
+CUR_LIMIT, K_T, G, K_P, K_D = args.limit, 0.12, 9.0, 1.6, 1.2
 KTG = K_T * G
 
 def runs(m):
@@ -44,11 +60,16 @@ total = ff + kp_t + kd_t
 live_mask = np.where(blackout, np.nan, 1.0)
 
 BREACHES = np.where(df.left_motorCurrent.abs() > CUR_LIMIT)[0]
+if not len(BREACHES):
+    raise SystemExit(f"no |left_motorCurrent| > {CUR_LIMIT:g} A in {CSV.name} "
+                     f"(peak {df.left_motorCurrent.abs().max():.1f} A) -- "
+                     f"pass a lower --limit or another --log")
+print(f"{len(BREACHES)} breach(es) > {CUR_LIMIT:g} A, peak {df.left_motorCurrent.abs().max():.1f} A"
+      + (f", at CSV rows: {' '.join(str(k + 2) for k in BREACHES)}" if len(BREACHES) <= 25 else ""))
 BLUE, RED, GREY, ORANGE, GREEN, PURPLE = "#1f6feb", "#d1242f", "#8c959f", "#bf5b04", "#1a7f37", "#8250df"
 
 # ---------------------------------------------------------------- detail ---
-want_row = int(sys.argv[1]) if len(sys.argv) > 1 else 10029
-i = want_row - 2
+i = (args.row - 2) if args.row is not None else -1
 if i not in BREACHES:
     i = int(BREACHES[np.argmax(df.left_motorCurrent.abs().values[BREACHES])])
 PRE, POST = 45, 55
@@ -59,7 +80,7 @@ trip = next(((a, b) for a, b in trips if a - 3 <= i <= b), None)
 
 fig, ax = plt.subplots(5, 1, figsize=(11.5, 13), sharex=True,
                        gridspec_kw={"height_ratios": [1.25, 1.25, 1.25, 1, 1]})
-fig.suptitle(f"Exhibit G - anatomy of a current spike (HIP002, CSV row {i+2}, t = {tb:.2f} s)",
+fig.suptitle(f"Exhibit G - anatomy of a current spike ({CSV.stem}, CSV row {i+2}, t = {tb:.2f} s)",
              fontweight="bold", y=0.995)
 
 # 1 - measured vs commanded current
@@ -115,7 +136,7 @@ for x in ax:
     x.axvline(tb, color=RED, lw=1.0, alpha=0.7)
     if trip: x.axvspan(t[trip[0]], t[min(trip[1], hi - 1)], color=RED, alpha=0.08)
 fig.tight_layout()
-fig.savefig(os.path.join(HERE, "exhibit_G_spike_detail.png"), dpi=150)
+fig.savefig(OUT / f"{CSV.stem}_exhibit_G_spike_detail.png", dpi=150)
 
 print(f"EXHIBIT G - CSV row {i+2}, t={tb:.2f}s")
 print(f"  {'row':>6} {'t':>7} | {'I meas':>7} {'cmd log':>8} | {'tqDes':>7} {'tqMeas':>7} {'err':>7} | "
@@ -128,7 +149,7 @@ for j in range(i - 8, min(i + 6, len(df))):
           f"{ff[j]:6.1f} {kp_t[j]:6.1f} {kd_t[j]:6.1f} {total[j]:7.1f} | "
           f"{df.left_motorVelocity[j]:7.0f} {df.left_gaitCycle[j]:5.1f}{mk}")
 
-# ------------------------------------------------------- all nine aligned ---
+# ------------------------------------------------------- all breaches aligned ---
 W = 30
 fig, ax = plt.subplots(1, 3, figsize=(14, 4.6))
 rel = np.arange(-W, W + 1) * 10.0   # ms relative to the breach sample
@@ -146,9 +167,11 @@ ax[1].set_title("tracking error $\\tau_d-\\tau_m$ [Nm]", fontsize=10)
 ax[2].set_title("$k_p$ contribution [A]", fontsize=10)
 for x in ax:
     x.axvline(0, color=RED, lw=1.0); x.grid(alpha=0.3); x.set_xlabel("ms relative to breach")
-ax[0].legend(fontsize=6, ncol=2)
-fig.suptitle("Exhibit H - all nine breaches, aligned on the breach sample: one mechanism, not nine accidents",
-             fontweight="bold")
+if len(BREACHES) <= 12:                 # one legend entry per breach is only readable when few
+    ax[0].legend(fontsize=6, ncol=2)
+fig.suptitle(f"Exhibit H - all {len(BREACHES)} breaches, aligned on the breach sample: "
+             f"one mechanism, not {len(BREACHES)} accidents", fontweight="bold")
 fig.tight_layout()
-fig.savefig(os.path.join(HERE, "exhibit_H_all_spikes.png"), dpi=150)
-print("\nwrote exhibit_G_spike_detail.png and exhibit_H_all_spikes.png")
+fig.savefig(OUT / f"{CSV.stem}_exhibit_H_all_spikes.png", dpi=150)
+print(f"\nwrote {CSV.stem}_exhibit_G_spike_detail.png and "
+      f"{CSV.stem}_exhibit_H_all_spikes.png in {OUT}")

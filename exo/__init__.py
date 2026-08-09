@@ -1,3 +1,4 @@
+from .data_paths import exo_csv, hilo_state
 from .plot_imu_motor import plot_imu_motor
 from .plot_imu_all import plot_imu_all
 from .plot_motor_all import plot_motor_all
@@ -33,6 +34,8 @@ from .plot_moment_mapping_rise_delay_sweep import plot_moment_mapping_rise_delay
 from .plot_torque_desired_measured import plot_torque_desired_measured
 
 __all__ = [
+    "exo_csv",
+    "hilo_state",
     "plot_imu_motor",
     "plot_imu_all",
     "plot_motor_all",

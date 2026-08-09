@@ -1,6 +1,12 @@
 """
-Current spikes in HIP002 annotated with the HILO optimisation parameters that
-were live at that moment, and with the moment estimate that produced the demand.
+Current spikes in an exo log annotated with the HILO optimisation parameters
+that were live at that moment, and with the moment estimate that produced the
+demand. The HILO_state.json is taken from the same session as the CSV, i.e.
+data/<subject>/<date>/optimization/*/HILO_state.json.
+
+Run:  python exo/make_spike_with_params.py [--log HIP002] [--weight 74]
+                                           [--limit 60] [--first-cond 2]
+The PNG is written next to the CSV, in the session's exo/ folder.
 
 Condition <-> time mapping is INFERRED (HILO_state.json carries no timestamps):
 measured moment->torque lag minus each condition's delayMsec is constant
@@ -15,25 +21,43 @@ which is exactly the mapping compute_release_torque() applies when shape=1 and
 the stride's running peak equals the N-stride peak average. Divergence from
 torqueDesired is therefore the shape exponent plus peak-normalisation.
 
-Subject mass 74 kg (confirmed by operator). Pilot1 was not recorded to SD,
-so the six logged segments are Pilot2..Pilot7 in order.
+For the original Subject 2 log: mass 74 kg (confirmed by operator), and Pilot1
+was not recorded to SD, so the logged segments were Pilot2..Pilot7 in order --
+hence --first-cond 2. Check both against the session you are plotting.
 """
-import os, json
+import argparse, json
 import numpy as np, pandas as pd
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-MISC = os.path.join(HERE, "..")
-CUR, K_T, G, K_P, K_D = 60.0, 0.12, 9.0, 1.6, 1.2
-KTG = K_T * G
-WEIGHT_KG = 74.0   # kg -- confirmed by operator
+try:
+    from .data_paths import exo_csv, hilo_state
+except ImportError:            # run as a plain script, not as part of the package
+    from data_paths import exo_csv, hilo_state
 
-st = json.load(open(os.path.join(MISC, "Subject 2", "HILO_state.json")))
+ap = argparse.ArgumentParser(description=__doc__,
+                             formatter_class=argparse.RawDescriptionHelpFormatter)
+ap.add_argument("--log", default="HIP002", help="log name or CSV path (default: HIP002)")
+ap.add_argument("--weight", type=float, default=74.0, help="subject mass [kg] (default: 74)")
+ap.add_argument("--limit", type=float, default=60.0, help="breach threshold [A] (default: 60)")
+ap.add_argument("--first-cond", type=int, default=2, dest="first_cond",
+                help="pilot condition the first logged segment corresponds to (default: 2)")
+args = ap.parse_args()
+
+CUR, K_T, G, K_P, K_D = args.limit, 0.12, 9.0, 1.6, 1.2
+KTG = K_T * G
+WEIGHT_KG = args.weight
+
+CSV = exo_csv(args.log)
+STATE = hilo_state(CSV)
+OUT = CSV.parent
+print(f"reading {CSV}\n    and {STATE}")
+
+st = json.load(open(STATE))
 ped = np.array(st["pilot_exploring_data"])     # [pca_x, pca_y, scale, delayMsec, shape, emg]
 H = st["torque_params_history"]
 
-df = pd.read_csv(os.path.join(MISC, "HIP002.csv")); t = df.time.values
+df = pd.read_csv(CSV); t = df.time.values
 
 def runs(m):
     m = np.asarray(m).astype(int); d = np.diff(np.r_[0, m, 0])
@@ -46,11 +70,13 @@ for a, b in gaps:
     if t[a] - t[prev] > 5: segs.append((prev, a))
     prev = b
 if t[-1] - t[prev] > 5: segs.append((prev, len(df) - 1))
-SEG2COND = {k: k + 2 for k in range(len(segs))}          # seg0->Pilot2 ... seg5->Pilot7
+SEG2COND = {k: k + args.first_cond for k in range(len(segs))}   # seg0->Pilot<first_cond>, ...
 
 def cond_at(i):
     for k, (a, b) in enumerate(segs):
-        if a <= i <= b: return SEG2COND[k]
+        if a <= i <= b:
+            c = SEG2COND[k]
+            return c if c <= len(ped) else None    # segment beyond the logged conditions
     return None
 
 ff   = (-df.left_torqueDesired / KTG).values
@@ -72,6 +98,10 @@ for i in BREACH:
     if c not in chosen or df.left_motorCurrent[i] > df.left_motorCurrent[chosen[c]]:
         chosen[c] = i
 picks = sorted(chosen.items())
+if not picks:
+    raise SystemExit(f"no |left_motorCurrent| > {CUR:g} A inside a walking segment of "
+                     f"{CSV.name} (peak {df.left_motorCurrent.abs().max():.1f} A) -- "
+                     f"pass a lower --limit or another --log")
 
 BLUE, RED, GREEN, ORANGE, GREY, PURPLE = "#1f6feb", "#d1242f", "#1a7f37", "#bf5b04", "#8c959f", "#8250df"
 N = len(picks)
@@ -143,11 +173,11 @@ for col, (cond, i) in enumerate(picks):
         for aa, bb in runs(blackout):
             if lo <= aa <= hi: ax[r, col].axvspan(t[aa], t[min(bb, hi)], color=RED, alpha=0.07)
 
-fig.suptitle("Current spikes with the HILO parameters live at that moment  —  "
+fig.suptitle(f"{CSV.stem} - current spikes with the HILO parameters live at that moment  —  "
              "moment estimate, its delay, and the resulting torque demand",
              fontweight="bold", fontsize=14)
 fig.tight_layout(rect=[0, 0, 1, 0.965])
-out = os.path.join(HERE, "exhibit_I_spikes_with_params.png")
+out = OUT / f"{CSV.stem}_exhibit_I_spikes_with_params.png"
 fig.savefig(out, dpi=140, bbox_inches="tight")
 print("wrote", out)
 for cond, i in picks:

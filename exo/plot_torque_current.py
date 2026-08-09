@@ -3,16 +3,23 @@
 Opens an interactive matplotlib window (toolbar: pan, box-zoom, scroll, home to reset) so
 nothing is lost to raster resolution. Edit the CONFIG block below, then just run the file:
 
-    python misc_files/plot_torque_current.py
+    python exo/plot_torque_current.py              # the log named in LOG below
+    python exo/plot_torque_current.py HIP004       # any HIPxxx.csv under data/
+    python exo/plot_torque_current.py path/to/HIP004.csv
 """
 
-from pathlib import Path
+import sys
 
 import pandas as pd
 import matplotlib.pyplot as plt
 
+try:
+    from .data_paths import exo_csv
+except ImportError:            # run as a plain script, not as part of the package
+    from data_paths import exo_csv
+
 # ---------------------------------------------------------------- CONFIG ----
-CSV = Path(__file__).parent / "filter_expl" / "HIP012.csv"
+LOG = "HIP002"                 # log name, looked up in data/<subject>/<date>/exo/
 
 SIDES = ["right", "left"]      # ["right"], ["left"] or ["right", "left"]
 SHOW_CURRENT = True            # motorCurrent in its own subplot under the torque plot
@@ -86,7 +93,9 @@ def plot_current(ax, t, df, side):
 
 
 def main():
-    df = pd.read_csv(CSV)
+    csv = exo_csv(sys.argv[1] if len(sys.argv) > 1 else LOG)
+    print(f"reading {csv}")
+    df = pd.read_csv(csv)
     if TMIN is not None:
         df = df[df["time"] >= TMIN]
     if TMAX is not None:
@@ -109,7 +118,7 @@ def main():
         else:
             plot_current(ax, t, df, side)
     axes[-1, 0].set_xlabel("time [s]")
-    fig.suptitle(f"{CSV.stem} - torque"
+    fig.suptitle(f"{csv.stem} - torque"
                  + (", motor current" if SHOW_CURRENT else "")
                  + (" and predicted moment" if SHOW_MOMENT else ""))
     fig.tight_layout()
